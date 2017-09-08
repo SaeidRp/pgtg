@@ -1,0 +1,302 @@
+<?php
+
+namespace Telegram\Bot\Commands;
+
+use Illuminate\Validation\UnauthorizedException;
+use Parsget\Bot\Utils\Middleware;
+use Parsget\Exceptions\ApiException;
+use Parsget\User;
+use Parsget\Utils\Util;
+use Telegram\Bot\Api;
+use Telegram\Bot\Objects\Update;
+
+/**
+ * Class Command.
+ *
+ *
+ * @method mixed replyWithMessage($use_sendMessage_parameters)       Reply Chat with a message. You can use all the sendMessage() parameters except chat_id.
+ * @method mixed replyWithPhoto($use_sendPhoto_parameters)           Reply Chat with a Photo. You can use all the sendPhoto() parameters except chat_id.
+ * @method mixed replyWithAudio($use_sendAudio_parameters)           Reply Chat with an Audio message. You can use all the sendAudio() parameters except chat_id.
+ * @method mixed replyWithVideo($use_sendVideo_parameters)           Reply Chat with a Video. You can use all the sendVideo() parameters except chat_id.
+ * @method mixed replyWithVoice($use_sendVoice_parameters)           Reply Chat with a Voice message. You can use all the sendVoice() parameters except chat_id.
+ * @method mixed replyWithDocument($use_sendDocument_parameters)     Reply Chat with a Document. You can use all the sendDocument() parameters except chat_id.
+ * @method mixed replyWithSticker($use_sendSticker_parameters)       Reply Chat with a Sticker. You can use all the sendSticker() parameters except chat_id.
+ * @method mixed replyWithLocation($use_sendLocation_parameters)     Reply Chat with a Location. You can use all the sendLocation() parameters except chat_id.
+ * @method mixed replyWithChatAction($use_sendChatAction_parameters) Reply Chat with a Chat Action. You can use all the sendChatAction() parameters except chat_id.
+ */
+abstract class Command implements CommandInterface
+{
+    /**
+     * The name of the Telegram command.
+     * Ex: help - Whenever the user sends /help, this would be resolved.
+     *
+     * @var string
+     */
+    protected $name;
+
+    /**
+     * @var string
+     */
+    protected $longName;
+
+    /**
+     * @var string The Telegram command description.
+     */
+    protected $description;
+
+    /**
+     * @var bool
+     */
+    protected $answer = false;
+
+    protected $authMiddleware = false;
+    /**
+     * @var Api Holds the Super Class Instance.
+     */
+    protected $telegram;
+
+    /**
+     * @var string Arguments passed to the command.
+     */
+    protected $arguments;
+
+    /**
+     * @var Update Holds an Update object.
+     */
+    protected $update;
+
+    /**
+     * Get Command Name.
+     *
+     * @return string
+     */
+    public function getName()
+    {
+        return $this->name;
+    }
+
+    /**
+     * Set Command Name.
+     *
+     * @param $name
+     *
+     * @return Command
+     */
+    public function setName($name)
+    {
+        $this->name = $name;
+
+        return $this;
+    }
+
+    /**
+     * Get Command Long Name.
+     *
+     * @return string
+     */
+    public function getLongName()
+    {
+        return $this->longName;
+    }
+
+    /**
+     * Get Command Description.
+     *
+     * @return string
+     */
+    public function getDescription()
+    {
+        return $this->description;
+    }
+
+    /**
+     * Set Command Description.
+     *
+     * @param $description
+     *
+     * @return Command
+     */
+    public function setDescription($description)
+    {
+        $this->description = $description;
+
+        return $this;
+    }
+
+    public function hasAnswerCallback()
+    {
+        return $this->answer;
+    }
+
+    /**
+     * Returns Telegram Instance.
+     *
+     * @return Api
+     */
+    public function getTelegram()
+    {
+        return $this->telegram;
+    }
+
+    /**
+     * Returns Original Update.
+     *
+     * @return Update
+     */
+    public function getUpdate()
+    {
+        return $this->update;
+    }
+
+    /**
+     * Get Arguments passed to the command.
+     *
+     * @return string
+     */
+    public function getArguments()
+    {
+        return $this->arguments;
+    }
+
+    /**
+     * Returns an instance of Command Bus.
+     *
+     * @return CommandBus
+     */
+    public function getCommandBus()
+    {
+        return $this->telegram->getCommandBus();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function make($telegram, $arguments, $update)
+    {
+        $this->telegram = $telegram;
+        $this->arguments = $arguments;
+        $this->update = $update;
+        $this->middleware();
+
+        return $this->handle($arguments);
+    }
+
+    public function answerCallback($telegram, $update)
+    {
+        $this->telegram = $telegram;
+        $this->update = $update;
+        $this->middleware();
+
+        return $this->handleAnswer();
+    }
+
+    public function inlineCallback($telegram, $update, $arguments)
+    {
+        $this->telegram = $telegram;
+        $this->update = $update;
+        $this->middleware();
+
+        return $this->handleInlineCallback($arguments);
+    }
+
+    public function torrentUpload($telegram, $update)
+    {
+        $this->telegram = $telegram;
+        $this->update = $update;
+        $this->middleware();
+        $response = $this->telegram->getFile([
+            'file_id' => $update->getMessage()->getDocument()->getFileId()
+        ]);
+
+        $downloadLink = "https://api.telegram.org/file/bot{$this->telegram->getAccessToken()}/{$response->getFilePath()}";
+
+        $filePath = Util::downloadTorrentFile($downloadLink);
+
+        return $this->handleTorrentUpload($filePath);
+    }
+
+    public function downloadFile($telegram, $update)
+    {
+        $this->telegram = $telegram;
+        $this->update = $update;
+        $this->middleware();
+
+        return $this->handleFileDownload();
+    }
+
+    protected function middleware()
+    {
+        if ($this->authMiddleware) {
+            $middleware = new Middleware($this);
+            $middleware->authentication($this->update);
+        }
+    }
+
+    /**
+     * Helper to Trigger other Commands.
+     *
+     * @param      $command
+     * @param null $arguments
+     *
+     * @return mixed
+     */
+    public function triggerCommand($command, $arguments = null)
+    {
+        return $this->getCommandBus()->execute($command, $arguments ?: $this->arguments, $this->update);
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    abstract public function handle($arguments);
+
+    public function handleAnswer()
+    {
+        //
+    }
+
+    public function handleInlineCallback($arguments)
+    {
+        //
+    }
+
+    public function handleTorrentUpload($path)
+    {
+        //
+    }
+
+    public function handleFileDownload()
+    {
+        //
+    }
+
+    /**
+     * Magic Method to handle all ReplyWith Methods.
+     *
+     * @param $method
+     * @param $arguments
+     *
+     * @return mixed|string
+     */
+    public function __call($method, $arguments)
+    {
+        $action = substr($method, 0, 9);
+        if ($action === 'replyWith') {
+            $reply_name = studly_case(substr($method, 9));
+            $methodName = 'send'.$reply_name;
+
+            if (!method_exists($this->telegram, $methodName)) {
+                return 'Method Not Found';
+            }
+
+            $chat_id = $this->update->has('callback_query') ?
+                $this->update->get('callback_query')['message']['chat']['id'] :
+                $this->update->getMessage()->getChat()->getId();
+            $params = array_merge(compact('chat_id'), $arguments[0]);
+
+            return call_user_func_array([$this->telegram, $methodName], [$params]);
+        }
+
+        return 'Method Not Found';
+    }
+}
